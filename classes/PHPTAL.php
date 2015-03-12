@@ -7,7 +7,7 @@
  * @category HTML
  * @package  PHPTAL
  * @author   Laurent Bedubourg <lbedubourg@motion-twin.com>
- * @author   Kornel Lesiński <kornel@aardvarkmedia.co.uk>
+ * @author   Kornel Lesi?ski <kornel@aardvarkmedia.co.uk>
  * @license  http://www.gnu.org/licenses/lgpl.html GNU Lesser General Public License
  * @version  SVN: $Id$
  * @link     http://phptal.org/
@@ -39,7 +39,7 @@ PHPTAL::autoloadRegister();
  * @category HTML
  * @package  PHPTAL
  * @author   Laurent Bedubourg <lbedubourg@motion-twin.com>
- * @author   Kornel Lesiński <kornel@aardvarkmedia.co.uk>
+ * @author   Kornel Lesi?ski <kornel@aardvarkmedia.co.uk>
  * @license  http://www.gnu.org/licenses/lgpl.html GNU Lesser General Public License
  * @link     http://phptal.org/
  */
@@ -93,11 +93,6 @@ class PHPTAL
     protected $_codeFile = null;
 
     /**
-     * php function generated for the template
-     */
-    protected $_functionName = null;
-
-    /**
      * set to true when template is ready for execution
      */
     protected $_prepared = false;
@@ -136,6 +131,12 @@ class PHPTAL
      * type of syntax used in generated templates
      */
     protected $_outputMode = PHPTAL::XHTML;
+
+    /**
+     * code-cache I/O strategy
+     */
+    protected $_codeCacheStorage = null;
+    
     /**
      * should all comments be stripped
      */
@@ -193,6 +194,7 @@ class PHPTAL
         } else {
             $this->setPhpCodeDestination('/tmp/');
         }
+        $this->_codeCacheStorage = new PHPTAL_FileCodeCacheStorage();
     }
 
     /**
@@ -229,7 +231,6 @@ class PHPTAL
     public function setTemplate($path)
     {
         $this->_prepared = false;
-        $this->_functionName = null;
         $this->_codeFile = null;
         $this->_path = $path;
         $this->_source = null;
@@ -252,7 +253,6 @@ class PHPTAL
     public function setSource($src, $path = null)
     {
         $this->_prepared = false;
-        $this->_functionName = null;
         $this->_codeFile = null;
         $this->_source = new PHPTAL_StringSource($src, $path);
         $this->_path = $this->_source->getRealPath();
@@ -791,13 +791,13 @@ class PHPTAL
     private function setCodeFile()
     {
         $this->findTemplate();
-        $this->_codeFile = $this->getPhpCodeDestination() . $this->getFunctionName() . '.' . $this->getPhpCodeExtension();
+        $this->_codeCacheStorage->initialize($this->getCacheLifetime(), $this->_source, $this->getEncoding(), $this->getPrefiltersCacheId(), $this->getOutputMode(), $this->getPhpCodeDestination(), $this->getPhpCodeExtension());
+        $this->_codeFile = $this->_codeCacheStorage->getPath();
     }
 
     protected function resetPrepared()
     {
         $this->_prepared = false;
-        $this->_functionName = null;
         $this->_codeFile = null;
     }
 
@@ -815,17 +815,17 @@ class PHPTAL
         if (!function_exists($this->getFunctionName())) {
             // parse template if php generated code does not exists or template
             // source file modified since last generation or force reparse is set
-            if ($this->getForceReparse() || !file_exists($this->getCodePath())) {
+            if ($this->getForceReparse() || !$this->_codeCacheStorage->cacheExists()) {
 
                 // i'm not sure where that belongs, but not in normal path of execution
                 // because some sites have _a lot_ of files in temp
                 if ($this->getCachePurgeFrequency() && mt_rand()%$this->getCachePurgeFrequency() == 0) {
-                    $this->cleanUpGarbage();
+                    $this->_codeCacheStorage->cleanUpGarbage();
                 }
 
                 $result = $this->parse();
 
-                if (!file_put_contents($this->getCodePath(), $result)) {
+                if (!$this->_codeCacheStorage->put($result)) {
                     throw new PHPTAL_IOException('Unable to open '.$this->getCodePath().' for writing');
                 }
 
@@ -851,9 +851,7 @@ class PHPTAL
                 ob_end_clean();
 
             } else {
-                // eval trick is used only on first run,
-                // just in case it causes any problems with opcode accelerators
-                require $this->getCodePath();
+                $this->_codeCacheStorage->loadFunction();
             }
         }
 
@@ -906,27 +904,8 @@ class PHPTAL
      */
     public function cleanUpGarbage()
     {
-        $cacheFilesExpire = time() - $this->getCacheLifetime() * 3600 * 24;
-
-        // relies on templates sorting order being related to their modification dates
-        $upperLimit = $this->getPhpCodeDestination() . $this->getFunctionNamePrefix($cacheFilesExpire) . '_';
-        $lowerLimit = $this->getPhpCodeDestination() . $this->getFunctionNamePrefix(0);
-
-        // second * gets phptal:cache
-        $cacheFiles = glob($this->getPhpCodeDestination() . 'tpl_????????_*.' . $this->getPhpCodeExtension() . '*');
-
-        if ($cacheFiles) {
-            foreach ($cacheFiles as $index => $file) {
-
-                // comparison here skips filenames that are certainly too new
-                if (strcmp($file, $upperLimit) <= 0 || substr($file, 0, strlen($lowerLimit)) === $lowerLimit) {
-                    $time = filemtime($file);
-                    if ($time && $time < $cacheFilesExpire) {
-                        @unlink($file);
-                    }
-                }
-            }
-        }
+        if (!$this->_codeFile) $this->setCodeFile();
+        $this->_codeCacheStorage->cleanUpGarbage();
     }
 
     /**
@@ -935,14 +914,8 @@ class PHPTAL
      */
     public function cleanUpCache()
     {
-        $filename = $this->getCodePath();
-        $cacheFiles = glob($filename . '?*');
-        if ($cacheFiles) {
-            foreach ($cacheFiles as $file) {
-                if (substr($file, 0, strlen($filename)) !== $filename) continue; // safety net
-                @unlink($file);
-            }
-        }
+        if (!$this->_codeFile) $this->setCodeFile();
+        $this->_codeCacheStorage->cleanUpCache();
         $this->_prepared = false;
     }
 
@@ -966,32 +939,8 @@ class PHPTAL
      */
     public function getFunctionName()
     {
-       // function name is used as base for caching, so it must be unique for
-       // every combination of settings that changes code in compiled template
-
-       if (!$this->_functionName) {
-
-            // just to make tempalte name recognizable
-            $basename = preg_replace('/\.[a-z]{3,5}$/', '', basename($this->_source->getRealPath()));
-            $basename = substr(trim(preg_replace('/[^a-zA-Z0-9]+/', '_', $basename), "_"), 0, 20);
-
-            $hash = md5(PHPTAL_VERSION . PHP_VERSION
-                    . $this->_source->getRealPath()
-                    . $this->getEncoding()
-                    . $this->getPrefiltersCacheId()
-                    . $this->getOutputMode(),
-                    true
-                    );
-
-            // uses base64 rather than hex to make filename shorter.
-            // there is loss of some bits due to name constraints and case-insensivity,
-            // but that's still over 110 bits in addition to basename and timestamp.
-            $hash = strtr(rtrim(base64_encode($hash),"="),"+/=","_A_");
-
-            $this->_functionName = $this->getFunctionNamePrefix($this->_source->getLastModifiedTime()) .
-                                   $basename . '__' . $hash;
-        }
-        return $this->_functionName;
+        if (!$this->_codeFile) $this->setCodeFile();
+        return $this->_codeCacheStorage->getFunctionName();
     }
 
     /**
