@@ -260,6 +260,20 @@ class PHPTAL
         $this->_context->_xmlDeclaration = null;
         return $this;
     }
+    
+    /**
+     * Set code-cahce storage.
+     *
+     * @param CodeCacheStorage $codeCacheStorage The CodeCacheStorage implementation.
+     *
+     * @return $this
+     */
+    public function setCodeCacheStorage($codeCacheStorage) {
+    	$this->_codeCacheStorage = $codeCacheStorage;
+        $this->_prepared = false;
+        $this->_codeFile = null;
+        return $this;
+    }
 
     /**
      * Specify where to look for templates.
