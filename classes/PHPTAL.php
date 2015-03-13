@@ -825,7 +825,7 @@ class PHPTAL
 
                 $result = $this->parse();
 
-                if (!$this->_codeCacheStorage->put($result)) {
+                if (!$this->_codeCacheStorage->store($result)) {
                     throw new PHPTAL_IOException('Unable to open '.$this->getCodePath().' for writing');
                 }
 

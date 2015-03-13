@@ -24,9 +24,9 @@ interface PHPTAL_CodeCacheStorage
     public function getPath();
 
     /**
-     * Put code to storage
+     * Store code to storage
      */
-    public function put($code);
+    public function store($code);
     
     /**
      * Get code from storage

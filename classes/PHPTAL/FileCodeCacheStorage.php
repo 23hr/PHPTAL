@@ -85,9 +85,9 @@ class PHPTAL_FileCodeCacheStorage implements PHPTAL_CodeCacheStorage
     }
     
     /**
-     * Put code to storage
+     * Store code to storage
      */
-    public function put($code)
+    public function store($code)
     {
     	return file_put_contents($this->_path, $code);
     }
